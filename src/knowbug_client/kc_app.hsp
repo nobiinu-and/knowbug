@@ -72,6 +72,7 @@
 #define global WM_COMMAND       0x0111
 #define global WM_TIMER         0x0113
 #define global WM_USER          0x0400
+#define global WM_APP           0x8000
 
 #define global NM_CLICK         (-2)
 #define global NM_DBLCLK        (-3)
@@ -197,7 +198,7 @@
 	}
 
 	logmes "send hello"
-	infra_send_hello
+	infra_send_hello s_main_window_hwnd
 	return
 
 #deffunc app_init_globals
@@ -475,7 +476,8 @@
 	s_help_button_hwnd = objinfo_hwnd(stat)
 
 	; タイマー (60fps)
-	SetTimer hwnd, s_animation_timer_id, 1000 / 60, NULL
+	; SetTimer hwnd, s_animation_timer_id, 1000 / 60, NULL
+	SetTimer hwnd, s_animation_timer_id, 5 * 1000, NULL
 	assert stat
 	if stat {
 		s_animation_timer_is_running = true
@@ -487,6 +489,7 @@
 	oncmd gosub *l_main_window_on_notify, WM_NOTIFY
 	oncmd gosub *l_main_window_on_context_menu, WM_CONTEXTMENU
 	oncmd gosub *l_main_window_on_timer, WM_TIMER
+	oncmd gosub *l_main_window_on_app1, WM_APP + 1
 	return
 
 *l_main_window_on_size
@@ -522,6 +525,15 @@
 
 		app_log_edit_update
 	}
+	return
+
+*l_main_window_on_app1
+
+	; WM_APP + 1: notify
+	logmes "trace: notify"
+
+	infra_poll
+	app_log_edit_update
 	return
 
 #deffunc app_main_window_on_exit

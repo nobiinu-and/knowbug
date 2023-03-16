@@ -69,6 +69,7 @@
 	}
 
 	assert data_cap >= 2
+	; assert varsize(data) >= data_cap
 
 	PeekNamedPipe s_stdin_handle, NULL, data_cap - 1, varptr(read_len), NULL, NULL
 	if stat == 0 {

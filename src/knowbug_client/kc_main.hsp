@@ -32,6 +32,8 @@
 	s_stdin_buffer_len = 0
 	s_stdin_buffer_cap = 1024 * 1024 ; 1 MB
 	sdim s_stdin_buffer, s_stdin_buffer_cap
+
+	s_server_hwnd = 0
 	return
 
 ; サーバーからのメッセージを受信・処理する
@@ -79,6 +81,15 @@
 ; サーバーへのメッセージ
 ; ------------------------------------------------
 
+; サーバーにメッセージの送信を通知する
+#deffunc infra_notify_server
+
+	if s_server_hwnd {
+		; 0x8001: WM_APP + 1
+		PostMessage s_server_hwnd, 0x8001, 0, 0
+	}
+	return
+
 ; サーバーにメッセージを送る
 #deffunc infra_send_message array keys, array values, array value_lens, int count, \
 	local message, local message_len
@@ -94,12 +105,15 @@
 	logmes "send: " + strmid(message, 0, message_len)
 
 	stdout_write message, message_len
+
+	infra_notify_server
 	return
 
-#deffunc infra_send_hello \
+#deffunc infra_send_hello int main_window_handle, \
 	local keys, local values, local value_lens, local count
 
 	assoc_set_str keys, values, value_lens, count, "method", "initialize_notification"
+	assoc_set_str keys, values, value_lens, count, "client_hwnd", str(main_window_handle)
 
 	infra_send_message keys, values, value_lens, count
 	return
@@ -204,7 +218,7 @@
 
 ; サーバーから来たメッセージを処理する
 #deffunc infra_process_message array keys, array values, array value_lens, var count, \
-	local method, local version, local version_len, local output, local output_len, \
+	local method, local version, local version_len, local server_hwnd, local output, local output_len, \
 	local source_file_id, local line_index, \
 	local source_path, local source_path_len, \
 	local source_code, local source_code_len, \
@@ -228,6 +242,8 @@
 			version = "v?.?.?"
 			version_len = strlen(version)
 		}
+
+		assoc_get_int keys, values, value_lens, count, "server_hwnd", s_server_hwnd
 
 		app_did_receive_hello_ok version
 		return

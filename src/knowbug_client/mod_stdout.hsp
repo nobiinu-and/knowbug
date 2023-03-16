@@ -73,6 +73,13 @@
 		return -1
 	}
 
+;	FlushFileBuffers s_stdout_handle
+;	if stat == 0 {
+;		GetLastError
+;		logmes "FlushFileBuffers error=" + stat
+;		return -1
+;	}
+
 	return written_len
 
 ; 標準出力に文字列を書き込む

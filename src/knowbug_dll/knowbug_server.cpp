@@ -21,6 +21,7 @@
 class KnowbugServerImpl;
 
 static constexpr auto MEMORY_BUFFER_SIZE = std::size_t{ 1024 * 1024 };
+static inline constexpr auto MILLIS = 1U;
 
 // -----------------------------------------------
 // バージョン
@@ -53,9 +54,9 @@ static auto knowbug_version() -> std::u8string {
 
 class HspObjectIdProvider {
 public:
-	virtual auto path_to_object_id(HspObjectPath const& path)->std::size_t = 0;
+	virtual auto path_to_object_id(HspObjectPath const& path) -> std::size_t = 0;
 
-	virtual auto object_id_to_path(std::size_t object_id)->std::optional<std::shared_ptr<HspObjectPath const>> = 0;
+	virtual auto object_id_to_path(std::size_t object_id) -> std::optional<std::shared_ptr<HspObjectPath const>> = 0;
 };
 
 class HspObjectListExpansion {
@@ -346,7 +347,7 @@ public:
 		return value_;
 	}
 
-	auto with_count(std::size_t count) ->HspObjectListDelta {
+	auto with_count(std::size_t count) -> HspObjectListDelta {
 		return HspObjectListDelta::new_remove(object_id(), index(), count);
 	}
 };
@@ -832,6 +833,8 @@ public:
 
 static auto s_server = std::weak_ptr<KnowbugServerImpl>{};
 
+static void WINAPI on_wait_handle_signal(void* context, BOOLEAN timeout);
+
 class KnowbugServerImpl
 	: public KnowbugServer
 {
@@ -853,7 +856,35 @@ class KnowbugServerImpl
 
 	std::optional<UINT_PTR> timer_opt_;
 
+	std::optional<HWND> client_hwnd_opt_;
+	std::optional<HANDLE> wait_handle_opt_;
+
 	HspObjectListEntity object_list_entity_;
+
+	void register_wait_for_client() {
+		//unregister_wait_for_client();
+
+		//if (!hidden_window_opt_ || !client_process_opt_) {
+		//	return;
+		//}
+		//auto stdout_handle = client_process_opt_->stdout_read_.get();
+
+		//auto wait_handle = HANDLE{};
+		//if (!RegisterWaitForSingleObject(&wait_handle, stdout_handle, on_wait_handle_signal, this, 1000 * MILLIS, WT_EXECUTEONLYONCE | WT_EXECUTEINWAITTHREAD)) {
+		//	assert(false && "RegisterWaitForSingleObject");
+		//}
+		//wait_handle_opt_ = wait_handle;
+	}
+
+	void unregister_wait_for_client() {
+		// if (wait_handle_opt_) {
+		// 	auto wait_handle = *wait_handle_opt_;
+		// 	if (!UnregisterWait(wait_handle)) {
+		// 		assert(false && "UnregisterWait");
+		// 	}
+		// 	wait_handle_opt_.reset();
+		// }
+	}
 
 public:
 	KnowbugServerImpl(HSP3DEBUG* debug, HspObjects& objects, HINSTANCE instance, KnowbugStepController& step_controller)
@@ -886,6 +917,8 @@ public:
 	}
 
 	void will_exit() override {
+		unregister_wait_for_client();
+
 		if (hidden_window_opt_ && timer_opt_) {
 			if (!KillTimer(hidden_window_opt_->get(), *timer_opt_)) {
 				assert(false && "KillTimer");
@@ -948,6 +981,14 @@ public:
 
 			client_did_send_something(*message_opt);
 		}
+
+		register_wait_for_client();
+	}
+
+	void poll_self() {
+		if (hidden_window_opt_.has_value()) {
+			PostMessage(hidden_window_opt_->get(), WM_APP + 1, 0, 0);
+		}
 	}
 
 	void client_did_send_something(KnowbugMessage const& message) {
@@ -955,7 +996,8 @@ public:
 		auto method_str = as_native(method);
 
 		if (method == u8"initialize_notification") {
-			client_did_initialize();
+			auto client_hwnd = (HWND)message.get_int(u8"client_hwnd").value_or(0);
+			client_did_initialize(client_hwnd);
 			return;
 		}
 
@@ -1024,7 +1066,18 @@ public:
 		assert(false && u8"unknown method");
 	}
 
-	void client_did_initialize() {
+	void client_did_initialize(HWND client_hwnd) {
+		if (client_hwnd != nullptr) {
+			client_hwnd_opt_ = client_hwnd;
+
+			OutputDebugStringA("trace: Client hwnd given");
+			if (hidden_window_opt_ && timer_opt_) {
+				if (!KillTimer(hidden_window_opt_->get(), *timer_opt_)) {
+					assert(false && "KillTimer");
+				}
+			}
+			timer_opt_ = SetTimer(hidden_window_opt_->get(), 1, 10 * 1000, NULL);
+		}
 		send_initialized_event();
 	}
 
@@ -1129,6 +1182,15 @@ private:
 			return;
 		}
 		assert(written_size == text.size());
+
+		if (!FlushFileBuffers(handle)) {
+			assert(false && u8"FlushFileBuffers");
+			return;
+		}
+
+		if (client_hwnd_opt_) {
+			PostMessage(*client_hwnd_opt_, WM_APP + 1, 0, 0);
+		}
 	}
 
 	void send_message(std::u8string_view method) {
@@ -1140,6 +1202,10 @@ private:
 		auto message = KnowbugMessage::new_with_method(std::u8string{ u8"initialized_event" });
 
 		message.insert(std::u8string{ u8"version" }, std::u8string{ as_utf8(KNOWBUG_VERSION) });
+
+		if (hidden_window_opt_) {
+			message.insert_int(std::u8string{ u8"server_hwnd" }, (int)hidden_window_opt_->get());
+		}
 
 		send_message(message);
 	}
@@ -1295,7 +1361,16 @@ static auto WINAPI process_hidden_window(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 		PostQuitMessage(0);
 		break;
 
+		// app + 1: polling request
 	case WM_TIMER: {
+		if (auto server = s_server.lock()) {
+			OutputDebugStringA("trace: TICK\n");
+			server->read_client_stdout();
+		}
+		break;
+	}
+	case WM_APP + 1: {
+		OutputDebugStringA("trace: POLL\n");
 		if (auto server = s_server.lock()) {
 			server->read_client_stdout();
 		}
@@ -1303,4 +1378,9 @@ static auto WINAPI process_hidden_window(HWND hwnd, UINT msg, WPARAM wp, LPARAM 
 	}
 	}
 	return DefWindowProc(hwnd, msg, wp, lp);
+}
+
+static void WINAPI on_wait_handle_signal(void* context, BOOLEAN timeout) {
+	auto& server = *(KnowbugServerImpl*)context;
+	server.poll_self();
 }

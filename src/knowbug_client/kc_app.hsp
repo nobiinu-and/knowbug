@@ -1121,13 +1121,17 @@
 	return
 
 #deffunc app_log_edit_append str text, \
-	local text_len
+	local text_len, local text_len_remain, local text_len_delete
 
 	text_len = strlen(text)
 
 	if s_log_text_len + text_len + 2 >= 0x7fff {
-		; FIXME: ログが長すぎると mesbox がクラッシュするので連結しない。
-		return
+		; FIXME: ログが長すぎるときは、古いログを削除する。
+		text_len_delete = text_len + 2 + 5000
+		text_len_remain = s_log_text_len - text_len_delete
+		poke s_log_text, 0, strmid(s_log_text, text_len_delete, text_len_remain)
+		poke s_log_text, text_len_remain, 0
+		s_log_text_len = text_len_remain
 	}
 
 	; NOTE: 文字列を書き込む領域を確保して (memexpand)、
